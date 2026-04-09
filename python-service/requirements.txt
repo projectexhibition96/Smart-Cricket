@@ -7,4 +7,4 @@ scikit-learn==1.5.2
 python-dotenv==1.0.1
 mediapipe==0.10.14
 opencv-python-headless==4.10.0.84
-
+gunicorn
