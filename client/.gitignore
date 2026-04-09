@@ -1,4 +1,13 @@
+# ----------------------------
+# Environment variables (IMPORTANT)
+# ----------------------------
+.env
+.env.*
+*.local
+
+# ----------------------------
 # Logs
+# ----------------------------
 logs
 *.log
 npm-debug.log*
@@ -7,16 +16,34 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# ----------------------------
+# Dependencies
+# ----------------------------
 node_modules
+
+# ----------------------------
+# Build output
+# ----------------------------
 dist
 dist-ssr
-*.local
+.vite
 
-# Editor directories and files
+# ----------------------------
+# Editor / IDE files
+# ----------------------------
 .vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
+
+# ----------------------------
+# OS / System files
+# ----------------------------
+.DS_Store
+
+# ----------------------------
+# Misc
+# ----------------------------
 *.suo
 *.ntvs*
 *.njsproj
