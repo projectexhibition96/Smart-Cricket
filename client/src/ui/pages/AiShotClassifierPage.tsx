@@ -97,53 +97,47 @@ export function AiShotClassifierPage() {
     ctx.clearRect(0, 0, c.width, c.height)
   }, [])
 
-  const drawOverlayDebug = useCallback(
-    (text: string) => {
-      const c = overlayRef.current
-      const wrap = videoWrapRef.current
-      if (!c || !wrap) return
-      const ctx = c.getContext('2d')
-      if (!ctx) return
-      const rect = wrap.getBoundingClientRect()
-      const dpr = window.devicePixelRatio || 1
-      const w = Math.max(1, Math.round(rect.width * dpr))
-      const h = Math.max(1, Math.round(rect.height * dpr))
-      if (c.width !== w) c.width = w
-      if (c.height !== h) c.height = h
+  const drawOverlayDebug = useCallback((text: string) => {
+    const c = overlayRef.current
+    const wrap = videoWrapRef.current
+    if (!c || !wrap) return
+    const ctx = c.getContext('2d')
+    if (!ctx) return
+    const rect = wrap.getBoundingClientRect()
+    const dpr = window.devicePixelRatio || 1
+    const w = Math.max(1, Math.round(rect.width * dpr))
+    const h = Math.max(1, Math.round(rect.height * dpr))
+    if (c.width !== w) c.width = w
+    if (c.height !== h) c.height = h
 
-      // Persistent debug layer: border + center marker + status text.
-      ctx.clearRect(0, 0, c.width, c.height)
-      ctx.save()
-      ctx.shadowBlur = 14
-      ctx.shadowColor = 'rgba(0, 229, 255, 0.65)'
-      ctx.strokeStyle = 'rgba(0, 229, 255, 1)'
-      ctx.lineWidth = Math.max(3, Math.round(3 * dpr))
-      ctx.strokeRect(
-        Math.round(6 * dpr),
-        Math.round(6 * dpr),
-        c.width - Math.round(12 * dpr),
-        c.height - Math.round(12 * dpr),
-      )
+    ctx.clearRect(0, 0, c.width, c.height)
+    ctx.save()
+    ctx.shadowBlur = 14
+    ctx.shadowColor = 'rgba(0, 229, 255, 0.65)'
+    ctx.strokeStyle = 'rgba(0, 229, 255, 1)'
+    ctx.lineWidth = Math.max(3, Math.round(3 * dpr))
+    ctx.strokeRect(
+      Math.round(6 * dpr),
+      Math.round(6 * dpr),
+      c.width - Math.round(12 * dpr),
+      c.height - Math.round(12 * dpr),
+    )
 
-      // center marker
-      const cx = c.width / 2
-      const cy = c.height / 2
-      ctx.beginPath()
-      ctx.moveTo(cx - 10 * dpr, cy)
-      ctx.lineTo(cx + 10 * dpr, cy)
-      ctx.moveTo(cx, cy - 10 * dpr)
-      ctx.lineTo(cx, cy + 10 * dpr)
-      ctx.stroke()
+    const cx = c.width / 2
+    const cy = c.height / 2
+    ctx.beginPath()
+    ctx.moveTo(cx - 10 * dpr, cy)
+    ctx.lineTo(cx + 10 * dpr, cy)
+    ctx.moveTo(cx, cy - 10 * dpr)
+    ctx.lineTo(cx, cy + 10 * dpr)
+    ctx.stroke()
 
-      // status
-      ctx.shadowColor = 'rgba(0, 255, 171, 0.8)'
-      ctx.fillStyle = 'rgba(0, 255, 171, 1)'
-      ctx.font = `${Math.max(12, Math.round(12 * dpr))}px ui-sans-serif, system-ui`
-      ctx.fillText(text, Math.round(12 * dpr), Math.round(22 * dpr))
-      ctx.restore()
-    },
-    [],
-  )
+    ctx.shadowColor = 'rgba(0, 255, 171, 0.8)'
+    ctx.fillStyle = 'rgba(0, 255, 171, 1)'
+    ctx.font = `${Math.max(12, Math.round(12 * dpr))}px ui-sans-serif, system-ui`
+    ctx.fillText(text, Math.round(12 * dpr), Math.round(22 * dpr))
+    ctx.restore()
+  }, [])
 
   const stopPoseOverlay = useCallback(() => {
     overlayCleanupRef.current?.()
@@ -197,7 +191,6 @@ export function AiShotClassifierPage() {
     return () => stopCamera()
   }, [stopCamera])
 
-  // Frontend-only skeleton overlay. Does not affect backend inference/prediction flow.
   useEffect(() => {
     if (!camOn || !poseOverlayOn) {
       stopPoseOverlay()
@@ -239,7 +232,6 @@ export function AiShotClassifierPage() {
       ctx.shadowColor = 'rgba(0,229,255,0.85)'
 
       const toXY = (lm: { x: number; y: number }) => {
-        // Video is mirrored via CSS scale-x[-1], so mirror overlay too.
         const x = (1 - lm.x) * w
         const y = lm.y * h
         return { x, y }
@@ -300,24 +292,40 @@ export function AiShotClassifierPage() {
       try {
         setOverlayStatus('initializing')
         setOverlayErrorShort('')
-        const ensurePoseScript = async () => {
-          if (window.Pose) {
-            return
+
+        const waitForPoseCtor = async () => {
+          let tries = 0
+          while (!window.Pose && tries < 20) {
+            await new Promise((r) => setTimeout(r, 150))
+            tries++
           }
+          if (!window.Pose) {
+            throw new Error('MediaPipe Pose constructor missing after script load')
+          }
+        }
+
+        const ensurePoseScript = async () => {
+          if (window.Pose) return
 
           const scriptSrc = '/mediapipe/pose/pose.js'
-          const existing = document.querySelector(`script[src="${scriptSrc}"]`) as HTMLScriptElement | null
+          const existing = document.querySelector(
+            `script[src="${scriptSrc}"]`,
+          ) as HTMLScriptElement | null
+
           if (existing) {
+            if (window.Pose) return
+
             await new Promise<void>((resolve, reject) => {
-              if (window.Pose) {
-                resolve()
-                return
-              }
-              existing.addEventListener('load', () => resolve(), { once: true })
-              existing.addEventListener('error', () => reject(new Error('Failed to load pose.js')), {
-                once: true,
-              })
+              const onLoad = () => resolve()
+              const onError = () => reject(new Error('Failed to load pose.js'))
+
+              existing.addEventListener('load', onLoad, { once: true })
+              existing.addEventListener('error', onError, { once: true })
+
+              setTimeout(() => resolve(), 0)
             })
+
+            await waitForPoseCtor()
             return
           }
 
@@ -325,14 +333,12 @@ export function AiShotClassifierPage() {
             const script = document.createElement('script')
             script.src = scriptSrc
             script.async = true
-            script.onload = () => {
-              resolve()
-            }
-            script.onerror = () => {
-              reject(new Error('Failed to load pose.js'))
-            }
+            script.onload = () => resolve()
+            script.onerror = () => reject(new Error('Failed to load pose.js'))
             document.head.appendChild(script)
           })
+
+          await waitForPoseCtor()
         }
 
         try {
@@ -347,6 +353,7 @@ export function AiShotClassifierPage() {
         }
 
         if (cancelled) return
+
         const PoseCtor = window.Pose
         if (!PoseCtor) {
           console.error('[Smart Cricket] MediaPipe Pose constructor missing on window')
@@ -355,14 +362,14 @@ export function AiShotClassifierPage() {
           drawOverlayDebug('Overlay: constructor missing')
           return
         }
+
         const locateFile = (file: string) => `/mediapipe/pose/${file}`
+
         let pose: any
         try {
-          pose = new PoseCtor({
-            locateFile,
-          })
+          pose = new PoseCtor({ locateFile })
         } catch (err) {
-          console.error('Pose constructor found but instantiation failed', err, PoseCtor)
+          console.error('[Smart Cricket] Pose constructor found but instantiation failed', err)
           setOverlayErrorShort('MediaPipe Pose constructor instantiation failed')
           setOverlayStatus('constructor_missing')
           drawOverlayDebug('Overlay: constructor missing')
@@ -377,18 +384,19 @@ export function AiShotClassifierPage() {
           minTrackingConfidence: 0.5,
         })
 
-        // Persistent debug layer: should always be visible when overlay is enabled.
         drawOverlayDebug('Overlay: initializing')
 
-        // Preload assets now so failures surface as "asset load failed" with a clear error.
         try {
           if (typeof pose.initialize === 'function') {
             await pose.initialize()
           }
+
+          await new Promise((r) => setTimeout(r, 150))
+
           if (import.meta.env.DEV) {
             console.info('[Smart Cricket] Pose overlay ready')
           }
-          // If initialization succeeds but no pose is in frame yet, keep debug overlay visible.
+
           setOverlayStatus('no_landmarks')
           drawOverlayDebug('Overlay: no landmarks')
         } catch (e) {
@@ -417,18 +425,23 @@ export function AiShotClassifierPage() {
         const loop = async () => {
           const video = videoRef.current
           if (cancelled || !video || !poseRef.current) return
+
           ensureCanvasSize()
+
           if (video.readyState >= 2) {
             try {
               await poseRef.current.send({ image: video })
             } catch (e) {
               console.warn('[Smart Cricket] Pose overlay send() failed:', e)
+              const msg = e instanceof Error ? e.message : String(e)
+              setOverlayErrorShort(msg.slice(0, 160))
               setOverlayStatus('send_failed')
               drawOverlayDebug('Overlay: send failed')
             }
           } else {
             drawOverlayDebug('Overlay: initializing')
           }
+
           overlayLoopRef.current = window.requestAnimationFrame(loop)
         }
 
@@ -552,7 +565,10 @@ export function AiShotClassifierPage() {
       </div>
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-2 lg:items-start">
-        <Card title="Start your camera to begin live shot detection." subtitle="We’ll track your pose and classify each shot as you play.">
+        <Card
+          title="Start your camera to begin live shot detection."
+          subtitle="We’ll track your pose and classify each shot as you play."
+        >
           <div className="space-y-4">
             <div
               ref={videoWrapRef}
@@ -564,12 +580,17 @@ export function AiShotClassifierPage() {
                 playsInline
                 muted
               />
-              <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 z-10 h-full w-full" />
+              <canvas
+                ref={overlayRef}
+                className="pointer-events-none absolute inset-0 z-10 h-full w-full"
+              />
               <canvas ref={canvasRef} className="hidden" />
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-xs text-white/60">Align your body within the frame for better tracking.</div>
+              <div className="text-xs text-white/60">
+                Align your body within the frame for better tracking.
+              </div>
               <div className="flex items-center gap-2">
                 <span className="rounded-full border border-white/10 bg-black/30 px-3 py-1 text-[11px] text-white/70">
                   Overlay:{' '}
@@ -582,9 +603,9 @@ export function AiShotClassifierPage() {
                           ? 'no landmarks'
                           : overlayStatus === 'constructor_missing'
                             ? 'constructor missing'
-                          : overlayStatus === 'asset_load_failed'
-                            ? 'asset load failed'
-                            : 'send failed'}
+                            : overlayStatus === 'asset_load_failed'
+                              ? 'asset load failed'
+                              : 'send failed'}
                   </span>
                 </span>
                 <button
@@ -598,9 +619,7 @@ export function AiShotClassifierPage() {
             </div>
 
             {overlayStatus === 'asset_load_failed' && overlayErrorShort ? (
-              <div className="text-xs text-red-200/90">
-                {overlayErrorShort}
-              </div>
+              <div className="text-xs text-red-200/90">{overlayErrorShort}</div>
             ) : null}
 
             <div className="flex flex-wrap gap-2">
@@ -703,8 +722,14 @@ export function AiShotClassifierPage() {
                 <ResponsiveContainer width="100%" height={280}>
                   <BarChart data={chartData}>
                     <CartesianGrid stroke="rgba(255,255,255,0.08)" />
-                    <XAxis dataKey="label" tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} />
-                    <YAxis tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }} allowDecimals={false} />
+                    <XAxis
+                      dataKey="label"
+                      tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }}
+                    />
+                    <YAxis
+                      tick={{ fill: 'rgba(255,255,255,0.7)', fontSize: 12 }}
+                      allowDecimals={false}
+                    />
                     <Tooltip
                       contentStyle={{
                         background: 'rgba(10,10,10,0.85)',
@@ -726,7 +751,10 @@ export function AiShotClassifierPage() {
         </div>
       </div>
 
-      <Card title="Recent predictions" subtitle="Recent predictions from your latest movements will be displayed here.">
+      <Card
+        title="Recent predictions"
+        subtitle="Recent predictions from your latest movements will be displayed here."
+      >
         {shotLog.length ? (
           <div className="max-h-[220px] overflow-auto rounded-xl border border-white/10">
             <table className="w-full text-left text-sm">
@@ -737,17 +765,22 @@ export function AiShotClassifierPage() {
                 </tr>
               </thead>
               <tbody>
-                {[...shotLog].slice(-40).reverse().map((p, idx) => (
-                  <tr key={`${shotLog.length}-${idx}`} className="border-t border-white/10">
-                    <td className="px-3 py-2 text-white/60">{shotLog.length - idx}</td>
-                    <td className="px-3 py-2 font-semibold text-white">{p}</td>
-                  </tr>
-                ))}
+                {[...shotLog]
+                  .slice(-40)
+                  .reverse()
+                  .map((p, idx) => (
+                    <tr key={`${shotLog.length}-${idx}`} className="border-t border-white/10">
+                      <td className="px-3 py-2 text-white/60">{shotLog.length - idx}</td>
+                      <td className="px-3 py-2 font-semibold text-white">{p}</td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>
         ) : (
-          <div className="text-sm text-white/60">Recent predictions from your latest movements will be displayed here.</div>
+          <div className="text-sm text-white/60">
+            Recent predictions from your latest movements will be displayed here.
+          </div>
         )}
       </Card>
     </div>
