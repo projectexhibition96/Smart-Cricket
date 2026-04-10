@@ -1,48 +1,140 @@
-# Smart Cricket
+# 🏏 Smart Cricket – AI-Powered Shot Analysis System
 
-AI-powered cricket shot analytics with a futuristic dashboard, CSV/JSON pose ingestion, a Flask model service, and a 3D batting visualizer.
+Smart Cricket is an AI-powered web application that analyzes cricket shots in real-time using computer vision and machine learning. It provides instant feedback on shot type, stance, and batting form using pose detection and a trained ML model.
 
-## Monorepo structure
+---
 
-- `client/`: React (Vite) + Tailwind + Framer Motion + React Three Fiber
-- `server/`: Node.js + Express + JWT + MongoDB (Atlas) + upload proxy to Flask
-- `python-service/`: Flask service that loads a scikit-learn `.pkl` and returns predictions
-- `uploads/`: temporary uploads (created automatically)
-- `client/public/models/`: your `.glb/.gltf` batting models + `manifest.json`
+## 🌐 Live Demo
 
-## Prerequisites
+* 🔗 Frontend (Main App): https://smartcricket-seven.vercel.app
+* 🤖 ML Service (Health Check): https://project-exhibition-96-smart-cricket-ml.hf.space/health
 
-- Node.js 20+ (recommended)
-- Python 3.10+
-- MongoDB Atlas connection string
+---
 
-## 1) Python service setup
+## 🔌 API Endpoints
 
-From `python-service/`:
+* Backend API Base:
+  https://smart-cricket-git-main-projectexhibition96s-projects.vercel.app
+
+* ML Prediction Endpoint:
+  https://project-exhibition-96-smart-cricket-ml.hf.space/predict_frame
+
+---
+
+## 🚀 Features
+
+* 🎯 Real-time cricket shot classification
+* 🧍 Live pose detection with skeleton overlay (MediaPipe)
+* 📊 Batting form analysis (elbow, knee, stance)
+* 📈 Shot distribution analytics dashboard
+* 🎥 Webcam-based live analysis
+* 🧠 ML model integration (scikit-learn)
+* 🌐 Fully deployed cloud architecture
+
+---
+
+## 🏗️ Architecture
+
+```text
+Frontend (Vercel)
+        ↓
+Backend API (Vercel)
+        ↓
+ML Service (Hugging Face - Flask + MediaPipe)
+```
+
+---
+
+## 📁 Project Structure
+
+```text
+smart-cricket/
+│
+├── client/            # React frontend (Vite)
+├── server/            # Node.js backend (Express API)
+├── python-service/    # Flask ML service
+├── uploads/           # Temporary storage
+└── README.md
+```
+
+---
+
+## ⚙️ Tech Stack
+
+### Frontend
+
+* React (Vite)
+* Tailwind CSS
+* Framer Motion
+* React Three Fiber (3D visualization)
+
+### Backend
+
+* Node.js
+* Express.js
+* MongoDB Atlas
+* JWT Authentication
+
+### ML Service
+
+* Flask
+* MediaPipe
+* OpenCV
+* scikit-learn
+
+---
+
+## 🧠 How It Works
+
+1. User enables webcam from the frontend
+2. Frames are captured continuously
+3. Frames → sent to backend API
+4. Backend → forwards frames to ML service
+5. ML service:
+
+   * extracts pose landmarks (MediaPipe)
+   * runs trained ML model
+   * returns prediction + feedback
+6. Frontend displays:
+
+   * shot type
+   * confidence score
+   * stance classification
+   * form feedback
+   * live skeleton overlay
+
+---
+
+## 🛠️ Local Setup
+
+### 1️⃣ Clone Repository
 
 ```bash
+git clone https://github.com/projectexhibition96/Smart-Cricket
+cd Smart-Cricket
+```
+
+---
+
+### 2️⃣ Start ML Service
+
+```bash
+cd python-service
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python app.py
 ```
 
-The Flask service runs at `http://localhost:5001`.
+Runs on:
 
-## 2) Server setup (Express)
-
-Create `server/.env`:
-
-```bash
-PORT=5050
-MONGODB_URI="YOUR_ATLAS_CONNECTION_STRING"
-JWT_SECRET="change-me"
-PYTHON_SERVICE_URL="http://localhost:5001"
-CLIENT_ORIGIN="http://localhost:5173,http://127.0.0.1:5173"
-UPLOAD_DIR="../uploads"
+```
+http://localhost:5001
 ```
 
-Run:
+---
+
+### 3️⃣ Start Backend
 
 ```bash
 cd server
@@ -50,17 +142,15 @@ npm install
 npm run dev
 ```
 
-Server runs at `http://localhost:5050` (port **5050** avoids macOS AirPlay using **5000**).
+Runs on:
 
-## 3) Client setup (Vite)
-
-Create `client/.env`:
-
-```bash
-VITE_API_BASE_URL="http://localhost:5050"
+```
+http://localhost:5050
 ```
 
-Run:
+---
+
+### 4️⃣ Start Frontend
 
 ```bash
 cd client
@@ -68,34 +158,68 @@ npm install
 npm run dev
 ```
 
-Client runs at `http://localhost:5173`.
+Runs on:
 
-## Using the AI Shot Classifier (live webcam)
+```
+http://localhost:5173
+```
 
-1. Put **`shot_model.pkl`** (your joblib model from `live_feedback.py`) in `python-service/`.
-2. Optionally copy **`ideal_batting_angles.json.example`** → **`ideal_batting_angles.json`** and tune angles (same format as your desktop script).
-3. Reinstall Python deps (`pip install -r requirements.txt`) so **MediaPipe** + **OpenCV** are available.
-4. Run Flask, then the Node API, then the Vite client. Open **AI Shot Classifier**, allow the camera, then **Start classification**.
+---
 
-Frames are sent from the browser to the API → Flask **`/predict_frame`** → MediaPipe pose + your model (same 33×4 landmark features as `live_feedback.py`).
+## 🔐 Environment Variables
 
-The **CSV / batch `/predict` endpoint** is still available for offline datasets if you call it directly.
+⚠️ Never commit real secrets. Use placeholders.
 
-## 3D model labels
+### Frontend
 
-Your model may output labels like `cover_drive`. Add those exact strings to `predictionLabels` in `client/public/models/manifest.json` so the 3D lab picks the right GLB.
+```env
+VITE_API_BASE_URL=your_backend_url
+```
 
-## 3D models
+---
 
-Place your models in `client/public/models/`.
+### Backend
 
-Update `client/public/models/manifest.json` to include your files and which prediction label they correspond to.
+```env
+PYTHON_SERVICE_URL=https://project-exhibition-96-smart-cricket-ml.hf.space
+MONGODB_URI=your_mongodb_connection_string
+JWT_SECRET=your_secret_key
+```
 
-## Notes on feature validation
+---
 
-The Flask service validates:
+## 📊 ML Model Details
 
-- File type is CSV/JSON
-- Columns match the model’s expected feature names (uses `model.feature_names_in_` when available)
-- Clear errors returned with missing/extra columns and the expected list
+* Model: scikit-learn classifier
+* Input: 33 pose landmarks (MediaPipe)
+* Output:
 
+  * Shot type
+  * Confidence score
+  * Stance classification
+  * Form feedback
+
+---
+
+## ⚠️ Notes
+
+* Camera requires HTTPS (works on Vercel deployment)
+* ML service may take a few seconds on first request (cold start)
+* Root Hugging Face URL shows *Not Found* — this is expected (API-only service)
+* Backend URL will show `Cannot GET /` — it is an API, not a UI
+
+---
+
+## 🚀 Future Improvements
+
+* Improve model accuracy
+* Add more shot types
+* Reduce real-time latency
+* Enhance mobile responsiveness
+* Add advanced coaching insights
+
+---
+
+## 📌 License
+
+This project is for educational and academic purposes.
