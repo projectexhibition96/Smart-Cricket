@@ -1,5 +1,5 @@
 """
-Pose + shot classification + form feedback (extracted from live webcam script).
+Pose + shot classification + form feedback.
 Used by Flask /predict_frame with images from the browser.
 """
 import json
@@ -14,7 +14,6 @@ import numpy as np
 
 mp_pose = mp.solutions.pose
 
-# Same mapping as live_feedback.py — adjust keys to match your model's class labels.
 DEFAULT_SHOT_TO_STANCE = {
     "cover_drive": "side_on_stance",
     "straight_drive": "side_on_stance",
@@ -23,7 +22,6 @@ DEFAULT_SHOT_TO_STANCE = {
     "sweep_shot": "open_stance",
 }
 
-# Server-side smoothing (last N raw predictions)
 SMOOTH_WINDOW = int(os.getenv("POSE_SMOOTH_WINDOW", "10"))
 _prediction_history: Dict[str, deque] = {}
 
@@ -34,11 +32,11 @@ def _session_deque(session_id: str) -> deque:
     return _prediction_history[session_id]
 
 
-def calculate_angle(a, b, c):
+def calculate_angle(a, b, c) -> int:
     a, b, c = np.array(a), np.array(b), np.array(c)
     ba = a - b
     bc = c - b
-    denom = (np.linalg.norm(ba) * np.linalg.norm(bc))
+    denom = np.linalg.norm(ba) * np.linalg.norm(bc)
     if denom < 1e-8:
         return 0
     cosine = np.dot(ba, bc) / denom
@@ -46,19 +44,185 @@ def calculate_angle(a, b, c):
     return int(np.degrees(np.arccos(cosine)))
 
 
-def get_feedback(joint_name, user, ideal, tolerance):
+def get_feedback(joint_name: str, user: float, ideal: float, tolerance: float) -> str:
     diff = user - ideal
+
     if abs(diff) <= tolerance:
         return f"{joint_name}: OK"
+
     if joint_name == "Elbow":
         return "Elbow: Raise" if diff < 0 else "Elbow: Lower"
+
     if joint_name == "Knee":
         return "Knee: Straight" if diff < 0 else "Knee: Bend"
-    return f"{joint_name}: adjust"
+
+    if joint_name == "Shoulder":
+        return "Shoulder: Open more" if diff < 0 else "Shoulder: Close slightly"
+
+    if joint_name == "Hip":
+        return "Hip: Rotate more" if diff < 0 else "Hip: Rotate back"
+
+    return f"{joint_name}: Adjust"
 
 
-def is_correct(user, ideal, tolerance):
+def is_correct(user: float, ideal: float, tolerance: float) -> bool:
     return abs(user - ideal) <= tolerance
+
+
+def score_from_angle(user: float, ideal: float, tolerance: float) -> int:
+    """
+    100 when perfect, then smoothly decreases.
+    At ideal +/- tolerance => still decent score.
+    Clamped to [0, 100].
+    """
+    diff = abs(user - ideal)
+    score = 100 - int((diff / max(tolerance, 1)) * 20)
+    return max(0, min(100, score))
+
+
+def _point_xy(lm_list, landmark_enum):
+    lm = lm_list[landmark_enum]
+    return [lm.x, lm.y]
+
+
+def _extract_angles(lm_list) -> Dict[str, int]:
+    left_shoulder = _point_xy(lm_list, mp_pose.PoseLandmark.LEFT_SHOULDER)
+    left_elbow = _point_xy(lm_list, mp_pose.PoseLandmark.LEFT_ELBOW)
+    left_wrist = _point_xy(lm_list, mp_pose.PoseLandmark.LEFT_WRIST)
+    left_hip = _point_xy(lm_list, mp_pose.PoseLandmark.LEFT_HIP)
+    left_knee = _point_xy(lm_list, mp_pose.PoseLandmark.LEFT_KNEE)
+    left_ankle = _point_xy(lm_list, mp_pose.PoseLandmark.LEFT_ANKLE)
+    right_shoulder = _point_xy(lm_list, mp_pose.PoseLandmark.RIGHT_SHOULDER)
+    right_hip = _point_xy(lm_list, mp_pose.PoseLandmark.RIGHT_HIP)
+
+    elbow_angle = calculate_angle(left_shoulder, left_elbow, left_wrist)
+    knee_angle = calculate_angle(left_hip, left_knee, left_ankle)
+
+    # Shoulder openness approximation:
+    # angle at left shoulder formed by left elbow - left shoulder - right shoulder
+    shoulder_angle = calculate_angle(left_elbow, left_shoulder, right_shoulder)
+
+    # Hip rotation/posture approximation:
+    # angle at left hip formed by left shoulder - left hip - left knee
+    hip_angle = calculate_angle(left_shoulder, left_hip, left_knee)
+
+    return {
+        "elbow": elbow_angle,
+        "knee": knee_angle,
+        "shoulder": shoulder_angle,
+        "hip": hip_angle,
+    }
+
+
+def _normalize_ideal_config(stance_data: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
+    """
+    Supports both old and new JSON formats.
+
+    Old format:
+    {
+      "elbow_mean": 90,
+      "knee_mean": 160,
+      "tolerance": 15
+    }
+
+    New format:
+    {
+      "tolerance": 15,
+      "joints": {
+        "elbow": {"mean": 90, "tolerance": 12, "weight": 0.35},
+        ...
+      }
+    }
+    """
+    if not isinstance(stance_data, dict):
+        return {}
+
+    # New format
+    joints = stance_data.get("joints")
+    if isinstance(joints, dict):
+        normalized = {}
+        default_tol = float(stance_data.get("tolerance", 15))
+        for joint_name, cfg in joints.items():
+            if not isinstance(cfg, dict):
+                continue
+            if "mean" not in cfg:
+                continue
+            normalized[joint_name] = {
+                "mean": float(cfg["mean"]),
+                "tolerance": float(cfg.get("tolerance", default_tol)),
+                "weight": float(cfg.get("weight", 1.0)),
+            }
+        return normalized
+
+    # Old format
+    default_tol = float(stance_data.get("tolerance", 15))
+    normalized = {}
+
+    mapping = {
+        "elbow": "elbow_mean",
+        "knee": "knee_mean",
+        "shoulder": "shoulder_mean",
+        "hip": "hip_mean",
+    }
+
+    for joint_name, mean_key in mapping.items():
+        if mean_key in stance_data:
+            normalized[joint_name] = {
+                "mean": float(stance_data[mean_key]),
+                "tolerance": default_tol,
+                "weight": 1.0,
+            }
+
+    return normalized
+
+
+def _evaluate_joints(measured_angles: Dict[str, int], stance_data: Dict[str, Any]) -> Dict[str, Any]:
+    joint_cfg = _normalize_ideal_config(stance_data)
+    if not joint_cfg:
+        return {
+            "joint_feedback": {},
+            "joint_scores": {},
+            "joint_correct": {},
+            "total_score": None,
+        }
+
+    feedback = {}
+    scores = {}
+    correct = {}
+    weighted_sum = 0.0
+    weight_total = 0.0
+
+    for joint_name, cfg in joint_cfg.items():
+        if joint_name not in measured_angles:
+            continue
+
+        measured = measured_angles[joint_name]
+        ideal = float(cfg["mean"])
+        tolerance = float(cfg["tolerance"])
+        weight = float(cfg["weight"])
+
+        pretty_name = joint_name.capitalize()
+        fb = get_feedback(pretty_name, measured, ideal, tolerance)
+        sc = score_from_angle(measured, ideal, tolerance)
+        ok = is_correct(measured, ideal, tolerance)
+
+        feedback[joint_name] = fb
+        scores[joint_name] = sc
+        correct[joint_name] = ok
+
+        weighted_sum += sc * weight
+        weight_total += weight
+
+    total_score = None
+    if weight_total > 0:
+        total_score = int(round(weighted_sum / weight_total))
+
+    return {
+        "joint_feedback": feedback,
+        "joint_scores": scores,
+        "joint_correct": correct,
+        "total_score": total_score,
+    }
 
 
 class PoseLivePipeline:
@@ -71,6 +235,7 @@ class PoseLivePipeline:
     def ensure_loaded(self):
         if self.model is not None:
             return
+
         model_path = os.getenv("SHOT_MODEL_PATH", "shot_model.pkl")
         if not os.path.exists(model_path):
             raise FileNotFoundError(
@@ -90,8 +255,6 @@ class PoseLivePipeline:
             with open(stance_map_path, encoding="utf-8") as f:
                 self.shot_to_stance = json.load(f)
 
-        # Browser frames arrive as independent images and may be sent concurrently.
-        # Using video-mode tracking across requests can trigger MediaPipe timestamp/state errors.
         self.pose = mp_pose.Pose(
             static_image_mode=True,
             model_complexity=int(os.getenv("MEDIAPIPE_MODEL_COMPLEXITY", "1")),
@@ -99,10 +262,9 @@ class PoseLivePipeline:
             min_tracking_confidence=float(os.getenv("MIN_TRACKING_CONFIDENCE", "0.5")),
         )
 
-    def predict_from_image_bytes(self, image_bytes: bytes, session_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        """
-        Returns (payload_dict, error_message).
-        """
+    def predict_from_image_bytes(
+        self, image_bytes: bytes, session_id: str
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         self.ensure_loaded()
         assert self.pose is not None and self.model is not None
 
@@ -118,11 +280,16 @@ class PoseLivePipeline:
             return {
                 "pose_detected": False,
                 "shot": None,
+                "raw_shot": None,
                 "confidence": None,
                 "stance": None,
+                "angles": {},
+                "joint_feedback": {},
+                "joint_scores": {},
+                "joint_correct": {},
+                "total_score": None,
                 "elbow_feedback": None,
                 "knee_feedback": None,
-                "total_score": None,
                 "elbow_angle": None,
                 "knee_angle": None,
             }, None
@@ -153,26 +320,10 @@ class PoseLivePipeline:
                 pass
 
         selected_stance = self.shot_to_stance.get(predicted_shot, "side_on_stance")
-        ideal = self.dataset.get(selected_stance) if self.dataset else None
+        ideal = self.dataset.get(selected_stance, {}) if self.dataset else {}
 
-        shoulder = [
-            lm_list[mp_pose.PoseLandmark.LEFT_SHOULDER].x,
-            lm_list[mp_pose.PoseLandmark.LEFT_SHOULDER].y,
-        ]
-        elbow = [
-            lm_list[mp_pose.PoseLandmark.LEFT_ELBOW].x,
-            lm_list[mp_pose.PoseLandmark.LEFT_ELBOW].y,
-        ]
-        wrist = [
-            lm_list[mp_pose.PoseLandmark.LEFT_WRIST].x,
-            lm_list[mp_pose.PoseLandmark.LEFT_WRIST].y,
-        ]
-        hip = [lm_list[mp_pose.PoseLandmark.LEFT_HIP].x, lm_list[mp_pose.PoseLandmark.LEFT_HIP].y]
-        knee = [lm_list[mp_pose.PoseLandmark.LEFT_KNEE].x, lm_list[mp_pose.PoseLandmark.LEFT_KNEE].y]
-        ankle = [lm_list[mp_pose.PoseLandmark.LEFT_ANKLE].x, lm_list[mp_pose.PoseLandmark.LEFT_ANKLE].y]
-
-        elbow_angle = calculate_angle(shoulder, elbow, wrist)
-        knee_angle = calculate_angle(hip, knee, ankle)
+        measured_angles = _extract_angles(lm_list)
+        evaluation = _evaluate_joints(measured_angles, ideal)
 
         payload: Dict[str, Any] = {
             "pose_detected": True,
@@ -180,34 +331,18 @@ class PoseLivePipeline:
             "raw_shot": predicted_raw,
             "confidence": confidence,
             "stance": selected_stance,
-            "elbow_angle": elbow_angle,
-            "knee_angle": knee_angle,
+            "angles": measured_angles,
+            "joint_feedback": evaluation["joint_feedback"],
+            "joint_scores": evaluation["joint_scores"],
+            "joint_correct": evaluation["joint_correct"],
+            "total_score": evaluation["total_score"],
+            # backward-compatible fields for your current frontend
+            "elbow_angle": measured_angles.get("elbow"),
+            "knee_angle": measured_angles.get("knee"),
+            "elbow_feedback": evaluation["joint_feedback"].get("elbow"),
+            "knee_feedback": evaluation["joint_feedback"].get("knee"),
+            "elbow_correct": evaluation["joint_correct"].get("elbow"),
+            "knee_correct": evaluation["joint_correct"].get("knee"),
         }
-
-        if ideal and isinstance(ideal, dict):
-            elbow_feedback = get_feedback("Elbow", elbow_angle, ideal["elbow_mean"], ideal["tolerance"])
-            knee_feedback = get_feedback("Knee", knee_angle, ideal["knee_mean"], ideal["tolerance"])
-            elbow_correct = is_correct(elbow_angle, ideal["elbow_mean"], ideal["tolerance"])
-            knee_correct = is_correct(knee_angle, ideal["knee_mean"], ideal["tolerance"])
-            elbow_score = max(0, 100 - abs(elbow_angle - ideal["elbow_mean"]))
-            knee_score = max(0, 100 - abs(knee_angle - ideal["knee_mean"]))
-            total_score = int((elbow_score + knee_score) / 2)
-            payload.update(
-                {
-                    "elbow_feedback": elbow_feedback,
-                    "knee_feedback": knee_feedback,
-                    "elbow_correct": elbow_correct,
-                    "knee_correct": knee_correct,
-                    "total_score": total_score,
-                }
-            )
-        else:
-            payload.update(
-                {
-                    "elbow_feedback": None,
-                    "knee_feedback": None,
-                    "total_score": None,
-                }
-            )
 
         return payload, None
